@@ -51,14 +51,16 @@ function readCookiesFromFile() {
 function writeCookiesToFile(cookies) {
   try {
     fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2), "utf-8");
-    return;
   } catch (err) {
     return;
   }
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
   const page = await browser.newPage();
 
   await page.setUserAgent(
@@ -77,7 +79,6 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
     page.on("response", async (response) => {
       const url = response.url();
-      const headers = response.headers();
 
       if (
         !matched &&
@@ -142,7 +143,10 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
 setInterval(async () => {
   const cookies = readCookiesFromFile();
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
   const page = await browser.newPage();
 
   try {
@@ -165,11 +169,15 @@ setInterval(async () => {
   } finally {
     await browser.close();
   }
-}, 600000);
+}, 200000);
 
 app.post("/download", async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, secret } = req.body;
+
+    if (secret !== process.env.SECRET_KEY) {
+      return res.status(401).json({ error: "UnAuthorized" });
+    }
 
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "Invalid input" });

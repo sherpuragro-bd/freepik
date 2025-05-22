@@ -1,4 +1,6 @@
 import express from "express";
+import puppeteerCore from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import fs from "fs";
@@ -7,7 +9,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 dotenv.config();
-
 const app = express();
 
 app.use(express.json({ limit: "5mb" }));
@@ -43,7 +44,7 @@ function readCookiesFromFile() {
       return JSON.parse(data);
     }
     return [];
-  } catch (err) {
+  } catch {
     return [];
   }
 }
@@ -51,16 +52,19 @@ function readCookiesFromFile() {
 function writeCookiesToFile(cookies) {
   try {
     fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2), "utf-8");
-  } catch (err) {
+  } catch {
     return;
   }
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
   const browser = await puppeteerExtra.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
   });
+
   const page = await browser.newPage();
 
   await page.setUserAgent(
@@ -101,14 +105,13 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
           const responseOnDownloadPage = await downloadPage.goto(url, {
             waitUntil: "networkidle2",
           });
-
           const dwJs = await responseOnDownloadPage.json();
 
           await downloadPage.close();
           await browser.close();
 
           resolve(dwJs);
-        } catch (e) {
+        } catch {
           await browser.close();
           reject({ error: "Failed to navigate to download URL" });
         }
@@ -127,7 +130,7 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
       });
 
       await page.click('button[data-cy="download-button"]');
-    } catch (err) {
+    } catch {
       await browser.close();
       reject({ error: "Failed to find or click download button" });
     }
@@ -144,8 +147,10 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 setInterval(async () => {
   const cookies = readCookiesFromFile();
   const browser = await puppeteerExtra.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
   });
   const page = await browser.newPage();
 
@@ -153,7 +158,6 @@ setInterval(async () => {
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     );
-
     await page.setViewport({ width: 1280, height: 800 });
 
     if (cookies.length > 0) {
@@ -164,12 +168,12 @@ setInterval(async () => {
 
     const newCookies = await page.cookies();
     writeCookiesToFile(newCookies);
-  } catch (err) {
+  } catch {
     return;
   } finally {
     await browser.close();
   }
-}, 600000);
+}, 200000);
 
 app.post("/download", async (req, res) => {
   try {
@@ -195,5 +199,5 @@ app.post("/download", async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on ${PORT} PORT`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
