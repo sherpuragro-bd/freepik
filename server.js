@@ -1,6 +1,4 @@
 import express from "express";
-import puppeteerCore from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import fs from "fs";
@@ -9,6 +7,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 dotenv.config();
+
 const app = express();
 
 app.use(express.json({ limit: "5mb" }));
@@ -44,7 +43,7 @@ function readCookiesFromFile() {
       return JSON.parse(data);
     }
     return [];
-  } catch {
+  } catch (err) {
     return [];
   }
 }
@@ -52,19 +51,16 @@ function readCookiesFromFile() {
 function writeCookiesToFile(cookies) {
   try {
     fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2), "utf-8");
-  } catch {
-    return;
+  } catch (err) {
+    // ignore write errors
   }
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
   const browser = await puppeteerExtra.launch({
-    args: chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
-
   const page = await browser.newPage();
 
   await page.setUserAgent(
@@ -105,13 +101,23 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
           const responseOnDownloadPage = await downloadPage.goto(url, {
             waitUntil: "networkidle2",
           });
+
           const dwJs = await responseOnDownloadPage.json();
+
+          // Extract updated cookies after download response
+          const newCookies = await downloadPage.cookies();
+
+          // Save new cookies to file
+          writeCookiesToFile(newCookies);
+
+          // Reset refresh timer to keep cookies fresh
+          resetRefreshTimer();
 
           await downloadPage.close();
           await browser.close();
 
           resolve(dwJs);
-        } catch {
+        } catch (e) {
           await browser.close();
           reject({ error: "Failed to navigate to download URL" });
         }
@@ -130,7 +136,7 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
       });
 
       await page.click('button[data-cy="download-button"]');
-    } catch {
+    } catch (err) {
       await browser.close();
       reject({ error: "Failed to find or click download button" });
     }
@@ -144,13 +150,14 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
   });
 }
 
-setInterval(async () => {
+let refreshTimer = null;
+const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+async function refreshCookies() {
   const cookies = readCookiesFromFile();
   const browser = await puppeteerExtra.launch({
-    args: chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const page = await browser.newPage();
 
@@ -168,12 +175,26 @@ setInterval(async () => {
 
     const newCookies = await page.cookies();
     writeCookiesToFile(newCookies);
-  } catch {
-    return;
+  } catch (err) {
+    console.error("Failed to refresh cookies", err);
   } finally {
     await browser.close();
   }
-}, 200000);
+}
+
+function startRefreshInterval() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    refreshCookies();
+  }, REFRESH_INTERVAL);
+}
+
+function resetRefreshTimer() {
+  startRefreshInterval();
+}
+
+// Start interval on server start
+startRefreshInterval();
 
 app.post("/download", async (req, res) => {
   try {
@@ -187,6 +208,8 @@ app.post("/download", async (req, res) => {
       return res.status(400).json({ error: "Invalid input" });
     }
 
+    resetRefreshTimer();
+
     const cookies = readCookiesFromFile();
 
     const result = await getDownloadResponseUrl(url, cookies);
@@ -199,5 +222,5 @@ app.post("/download", async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on ${PORT} PORT`);
 });
