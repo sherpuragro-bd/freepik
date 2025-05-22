@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
+import PQueue from "p-queue";
 
 dotenv.config();
 
@@ -17,6 +18,11 @@ app.use(cors({ origin: "*" }));
 puppeteerExtra.use(StealthPlugin());
 
 const COOKIES_PATH = path.resolve("./cookies.json");
+const REFRESH_INTERVAL = 5 * 60 * 1000;
+let refreshTimer = null;
+
+// 🔒 Concurrency control
+const queue = new PQueue({ concurrency: 2 }); // allow 2 simultaneous Puppeteer jobs
 
 function sanitizeCookies(cookies) {
   return cookies.map((cookie) => {
@@ -42,18 +48,14 @@ function readCookiesFromFile() {
       const data = fs.readFileSync(COOKIES_PATH, "utf-8");
       return JSON.parse(data);
     }
-    return [];
-  } catch (err) {
-    return [];
-  }
+  } catch (_) {}
+  return [];
 }
 
 function writeCookiesToFile(cookies) {
   try {
     fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2), "utf-8");
-  } catch (err) {
-    // ignore write errors
-  }
+  } catch (_) {}
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
@@ -61,8 +63,8 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
     headless: "new",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
-  const page = await browser.newPage();
 
+  const page = await browser.newPage();
   await page.setUserAgent(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
   );
@@ -79,7 +81,6 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
     page.on("response", async (response) => {
       const url = response.url();
-
       if (
         !matched &&
         (url.includes("download?resource") || url.includes("download?walletId"))
@@ -88,7 +89,6 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
         try {
           const downloadPage = await browser.newPage();
-
           await downloadPage.setUserAgent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
           );
@@ -103,23 +103,16 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
           });
 
           const dwJs = await responseOnDownloadPage.json();
-
-          // Extract updated cookies after download response
           const newCookies = await downloadPage.cookies();
-
-          // Save new cookies to file
           writeCookiesToFile(newCookies);
-
-          // Reset refresh timer to keep cookies fresh
-          resetRefreshTimer();
 
           await downloadPage.close();
           await browser.close();
-
+          resetRefreshTimer();
           resolve(dwJs);
         } catch (e) {
           await browser.close();
-          reject({ error: "Failed to navigate to download URL" });
+          reject({ error: "Failed to process download page." });
         }
       }
     });
@@ -138,20 +131,17 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
       await page.click('button[data-cy="download-button"]');
     } catch (err) {
       await browser.close();
-      reject({ error: "Failed to find or click download button" });
+      return reject({ error: "Download button not found or not clickable" });
     }
 
     setTimeout(async () => {
       if (!matched) {
         await browser.close();
-        reject({ error: "Download URL not found" });
+        reject({ error: "Download response not captured in time." });
       }
     }, 15000);
   });
 }
-
-let refreshTimer = null;
-const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 async function refreshCookies() {
   const cookies = readCookiesFromFile();
@@ -172,7 +162,6 @@ async function refreshCookies() {
     }
 
     await page.goto("https://www.freepik.com", { waitUntil: "networkidle2" });
-
     const newCookies = await page.cookies();
     writeCookiesToFile(newCookies);
   } catch (err) {
@@ -193,34 +182,32 @@ function resetRefreshTimer() {
   startRefreshInterval();
 }
 
-// Start interval on server start
 startRefreshInterval();
 
 app.post("/download", async (req, res) => {
+  const { url, secret } = req.body;
+
+  if (secret !== process.env.SECRET_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "Invalid input" });
+  }
+
+  resetRefreshTimer();
+
+  const cookies = readCookiesFromFile();
+
   try {
-    const { url, secret } = req.body;
-
-    if (secret !== process.env.SECRET_KEY) {
-      return res.status(401).json({ error: "UnAuthorized" });
-    }
-
-    if (!url || typeof url !== "string") {
-      return res.status(400).json({ error: "Invalid input" });
-    }
-
-    resetRefreshTimer();
-
-    const cookies = readCookiesFromFile();
-
-    const result = await getDownloadResponseUrl(url, cookies);
-
+    const result = await queue.add(() => getDownloadResponseUrl(url, cookies));
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.error || err.toString() });
+    res.status(500).json({ error: err?.error || "Unexpected server error." });
   }
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on ${PORT} PORT`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
