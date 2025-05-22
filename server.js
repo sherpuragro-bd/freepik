@@ -51,14 +51,16 @@ function readCookiesFromFile() {
 function writeCookiesToFile(cookies) {
   try {
     fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2), "utf-8");
-    return;
   } catch (err) {
     return;
   }
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
   const page = await browser.newPage();
 
   await page.setUserAgent(
@@ -77,7 +79,6 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
     page.on("response", async (response) => {
       const url = response.url();
-      const headers = response.headers();
 
       if (
         !matched &&
@@ -142,7 +143,10 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
 
 setInterval(async () => {
   const cookies = readCookiesFromFile();
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
   const page = await browser.newPage();
 
   try {
