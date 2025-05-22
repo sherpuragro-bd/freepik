@@ -58,7 +58,11 @@ function writeCookiesToFile(cookies) {
 }
 
 async function getDownloadResponseUrl(freepikUrl, cookies) {
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
   const page = await browser.newPage();
 
   await page.setUserAgent(
@@ -120,9 +124,14 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
   });
 }
 
+// 🔁 Refresh cookies every 10 minutes
 setInterval(async () => {
   const cookies = readCookiesFromFile();
-  const browser = await puppeteerExtra.launch({ headless: "new" });
+  const browser = await puppeteerExtra.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
   const page = await browser.newPage();
 
   try {
