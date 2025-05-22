@@ -169,11 +169,7 @@ setInterval(async () => {
 
 app.post("/download", async (req, res) => {
   try {
-    const { url, secret } = req.body;
-
-    if (secret !== process.env.SECRET_KEY) {
-      return res.status(401).json({ error: "UnAuthorized" });
-    }
+    const { url } = req.body;
 
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "Invalid input" });
