@@ -165,16 +165,33 @@ app.post("/download", async (req, res) => {
     }
 
     const cookies = readCookiesFromFile();
-
     const result = await getDownloadResponseUrl(url, cookies);
 
-    res.json({
-      type: "download?resource",
-      url: result.url,
-      contentType: result.contentType,
+    const cookieHeader = cookies
+      .filter((cookie) => !!cookie.name && !!cookie.value)
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+
+    const response = await fetch(result.url, {
+      headers: {
+        Cookie: cookieHeader,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      },
     });
+
+    const contentType = response.headers.get("content-type");
+
+    if (contentType?.includes("application/json")) {
+      const json = await response.json();
+      return res.json(json);
+    }
+
+    const buffer = await response.arrayBuffer();
+    res.setHeader("Content-Type", contentType || "application/octet-stream");
+    res.send(Buffer.from(buffer));
   } catch (err) {
-    res.status(500).json({ error: err.error || err.toString() });
+    res.status(500).json({ error: err?.message || err.toString() });
   }
 });
 
