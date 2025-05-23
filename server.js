@@ -21,8 +21,7 @@ const COOKIES_PATH = path.resolve("./cookies.json");
 const REFRESH_INTERVAL = 5 * 60 * 1000;
 let refreshTimer = null;
 
-// 🔒 Concurrency control
-const queue = new PQueue({ concurrency: 2 }); // allow 2 simultaneous Puppeteer jobs
+const queue = new PQueue({ concurrency: 3 });
 
 function sanitizeCookies(cookies) {
   return cookies.map((cookie) => {
@@ -88,30 +87,28 @@ async function getDownloadResponseUrl(freepikUrl, cookies) {
         matched = true;
 
         try {
-          const downloadPage = await browser.newPage();
-          await downloadPage.setUserAgent(
+          await page.setUserAgent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
           );
-          await downloadPage.setViewport({ width: 1280, height: 800 });
+          await page.setViewport({ width: 1280, height: 800 });
 
           if (cookies.length > 0) {
-            await downloadPage.setCookie(...sanitizeCookies(cookies));
+            await page.setCookie(...sanitizeCookies(cookies));
           }
 
-          const responseOnDownloadPage = await downloadPage.goto(url, {
+          const responseOnDownloadPage = await page.goto(url, {
             waitUntil: "networkidle2",
           });
 
           const dwJs = await responseOnDownloadPage.json();
-          const newCookies = await downloadPage.cookies();
+
+          const newCookies = await page.cookies();
           writeCookiesToFile(newCookies);
 
-          await downloadPage.close();
-          await browser.close();
           resetRefreshTimer();
+
           resolve(dwJs);
         } catch (e) {
-          await browser.close();
           reject({ error: "Failed to process download page." });
         }
       }
